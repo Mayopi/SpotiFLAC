@@ -429,6 +429,13 @@ func (a *App) DownloadTrack(req DownloadRequest) (DownloadResponse, error) {
 			filename, err = downloader.DownloadBySpotifyID(req.SpotifyID, req.OutputDir, req.AudioFormat, req.FilenameFormat, req.PlaylistName, req.PlaylistOwner, req.TrackNumber, req.Position, req.TrackName, req.ArtistName, req.AlbumName, req.AlbumArtist, req.ReleaseDate, req.CoverURL, req.SpotifyTrackNumber, req.SpotifyDiscNumber, req.SpotifyTotalTracks, req.EmbedMaxQualityCover, req.SpotifyTotalDiscs, req.Copyright, req.Publisher, spotifyURL, req.UseFirstArtistOnly, req.UseSingleGenre, req.EmbedGenre)
 		}
 
+		if err != nil && req.AllowFallback && req.SpotifyID != "" {
+			fmt.Printf("⚠ Amazon failed: %v\n", err)
+			fmt.Println("Falling back to Tidal...")
+			tidalDownloader := backend.NewTidalDownloader("")
+			filename, err = tidalDownloader.Download(req.SpotifyID, req.OutputDir, "LOSSLESS", req.FilenameFormat, req.TrackNumber, req.Position, req.TrackName, req.ArtistName, req.AlbumName, req.AlbumArtist, req.ReleaseDate, req.UseAlbumTrackNumber, req.CoverURL, req.EmbedMaxQualityCover, req.SpotifyTrackNumber, req.SpotifyDiscNumber, req.SpotifyTotalTracks, req.SpotifyTotalDiscs, req.Copyright, req.Publisher, spotifyURL, req.AllowFallback, req.UseFirstArtistOnly, req.UseSingleGenre, req.EmbedGenre)
+		}
+
 	case "tidal":
 		if req.ApiURL == "" || req.ApiURL == "auto" {
 			downloader := backend.NewTidalDownloader("")
@@ -446,6 +453,13 @@ func (a *App) DownloadTrack(req DownloadRequest) (DownloadResponse, error) {
 			}
 		}
 
+		if err != nil && req.AllowFallback && req.SpotifyID != "" {
+			fmt.Printf("⚠ Tidal failed: %v\n", err)
+			fmt.Println("Falling back to Amazon...")
+			amazonDownloader := backend.NewAmazonDownloader()
+			filename, err = amazonDownloader.DownloadBySpotifyID(req.SpotifyID, req.OutputDir, req.AudioFormat, req.FilenameFormat, req.PlaylistName, req.PlaylistOwner, req.TrackNumber, req.Position, req.TrackName, req.ArtistName, req.AlbumName, req.AlbumArtist, req.ReleaseDate, req.CoverURL, req.SpotifyTrackNumber, req.SpotifyDiscNumber, req.SpotifyTotalTracks, req.EmbedMaxQualityCover, req.SpotifyTotalDiscs, req.Copyright, req.Publisher, spotifyURL, req.UseFirstArtistOnly, req.UseSingleGenre, req.EmbedGenre)
+		}
+
 	case "qobuz":
 
 		fmt.Println("Waiting for ISRC (Qobuz dependency)...")
@@ -456,6 +470,15 @@ func (a *App) DownloadTrack(req DownloadRequest) (DownloadResponse, error) {
 			quality = "6"
 		}
 		filename, err = downloader.DownloadTrackWithISRC(isrc, req.SpotifyID, req.OutputDir, quality, req.FilenameFormat, req.TrackNumber, req.Position, req.TrackName, req.ArtistName, req.AlbumName, req.AlbumArtist, req.ReleaseDate, req.UseAlbumTrackNumber, req.CoverURL, req.EmbedMaxQualityCover, req.SpotifyTrackNumber, req.SpotifyDiscNumber, req.SpotifyTotalTracks, req.SpotifyTotalDiscs, req.Copyright, req.Publisher, spotifyURL, req.AllowFallback, req.UseFirstArtistOnly, req.UseSingleGenre, req.EmbedGenre)
+
+		if err != nil && req.AllowFallback {
+			fmt.Printf("⚠ Qobuz failed: %v\n", err)
+			fmt.Println("Falling back to Tidal...")
+			tidalDownloader := backend.NewTidalDownloader("")
+			if req.SpotifyID != "" {
+				filename, err = tidalDownloader.Download(req.SpotifyID, req.OutputDir, "LOSSLESS", req.FilenameFormat, req.TrackNumber, req.Position, req.TrackName, req.ArtistName, req.AlbumName, req.AlbumArtist, req.ReleaseDate, req.UseAlbumTrackNumber, req.CoverURL, req.EmbedMaxQualityCover, req.SpotifyTrackNumber, req.SpotifyDiscNumber, req.SpotifyTotalTracks, req.SpotifyTotalDiscs, req.Copyright, req.Publisher, spotifyURL, req.AllowFallback, req.UseFirstArtistOnly, req.UseSingleGenre, req.EmbedGenre)
+			}
+		}
 
 	default:
 		return DownloadResponse{

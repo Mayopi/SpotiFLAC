@@ -78,6 +78,10 @@ func NewQobuzDownloader() *QobuzDownloader {
 }
 
 func (q *QobuzDownloader) searchByISRC(isrc string) (*QobuzTrack, error) {
+	if isrc == "" {
+		return nil, fmt.Errorf("ISRC is empty — cannot search Qobuz without a valid ISRC")
+	}
+
 	apiBase := "https://www.qobuz.com/api.json/0.2/track/search?query="
 	url := fmt.Sprintf("%s%s&limit=1&app_id=%s", apiBase, isrc, q.appID)
 

@@ -449,6 +449,21 @@ export function SettingsPage({ onUnsavedChangesChange, onResetRequest, }: Settin
                   </div>)}
               </div>
 
+              <div className="space-y-2">
+                <Label htmlFor="max-retries">Retry Failed Downloads</Label>
+                <Select value={String(tempSettings.maxRetries ?? 0)} onValueChange={(value) => setTempSettings((prev) => ({ ...prev, maxRetries: Number(value) }))}>
+                  <SelectTrigger id="max-retries" className="h-9 w-fit">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">No retry</SelectItem>
+                    <SelectItem value="1">1 retry</SelectItem>
+                    <SelectItem value="2">2 retries</SelectItem>
+                    <SelectItem value="3">3 retries</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="border-t pt-6"/>
 
               <div className="space-y-4">

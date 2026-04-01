@@ -34,6 +34,7 @@ export interface Settings {
     useSingleGenre: boolean;
     embedGenre: boolean;
     separator: "comma" | "semicolon";
+    maxRetries: number;
 }
 export const FOLDER_PRESETS: Record<FolderPreset, {
     label: string;
@@ -118,7 +119,8 @@ export const DEFAULT_SETTINGS: Settings = {
     useFirstArtistOnly: false,
     useSingleGenre: false,
     embedGenre: true,
-    separator: "semicolon"
+    separator: "semicolon",
+    maxRetries: 0
 };
 export const FONT_OPTIONS: {
     value: FontFamily;
@@ -228,6 +230,9 @@ function getSettingsFromLocalStorage(): Settings {
             if (!('separator' in parsed)) {
                 parsed.separator = "semicolon";
             }
+            if (!('maxRetries' in parsed)) {
+                parsed.maxRetries = 0;
+            }
             return { ...DEFAULT_SETTINGS, ...parsed };
         }
     }
@@ -321,6 +326,9 @@ export async function loadSettings(): Promise<Settings> {
             }
             if (!('separator' in parsed)) {
                 parsed.separator = "semicolon";
+            }
+            if (!('maxRetries' in parsed)) {
+                parsed.maxRetries = 0;
             }
             cachedSettings = { ...DEFAULT_SETTINGS, ...parsed };
             return cachedSettings!;

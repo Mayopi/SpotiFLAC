@@ -78,10 +78,6 @@ func NewQobuzDownloader() *QobuzDownloader {
 }
 
 func (q *QobuzDownloader) searchByISRC(isrc string) (*QobuzTrack, error) {
-	if isrc == "" {
-		return nil, fmt.Errorf("ISRC is empty — cannot search Qobuz without a valid ISRC")
-	}
-
 	apiBase := "https://www.qobuz.com/api.json/0.2/track/search?query="
 	url := fmt.Sprintf("%s%s&limit=1&app_id=%s", apiBase, isrc, q.appID)
 
@@ -91,8 +87,8 @@ func (q *QobuzDownloader) searchByISRC(isrc string) (*QobuzTrack, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, httpError("Qobuz Search", resp)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
 	}
 
 	var searchResp QobuzSearchResponse
@@ -137,8 +133,8 @@ func (q *QobuzDownloader) DownloadFromStandard(apiBase string, trackID int64, qu
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return "", httpError("Qobuz Stream", resp)
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("status %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -147,7 +143,7 @@ func (q *QobuzDownloader) DownloadFromStandard(apiBase string, trackID int64, qu
 	}
 
 	if len(body) == 0 {
-		return "", fmt.Errorf("[Qobuz Stream] empty response body from %s", apiURL)
+		return "", fmt.Errorf("empty body")
 	}
 
 	var streamResp QobuzStreamResponse
@@ -262,8 +258,8 @@ func (q *QobuzDownloader) DownloadFile(url, filepath string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return httpError("Qobuz Download", resp)
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("download failed with status %d", resp.StatusCode)
 	}
 
 	fmt.Printf("Creating file: %s\n", filepath)
@@ -296,8 +292,8 @@ func (q *QobuzDownloader) DownloadCoverArt(coverURL, filepath string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return httpError("Qobuz Cover", resp)
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("cover download failed with status %d", resp.StatusCode)
 	}
 
 	out, err := os.Create(filepath)

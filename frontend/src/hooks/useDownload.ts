@@ -767,43 +767,53 @@ export function useDownload(region: string) {
             setDownloadingTrack(id);
             const displayArtist = settings.useFirstArtistOnly && track.artists ? getFirstArtist(track.artists) : track.artists;
             setCurrentDownloadInfo({ name: track.name, artists: displayArtist || "" });
-            try {
-                const releaseYear = track.release_date?.substring(0, 4);
-                const response = await downloadWithItemID(settings, itemID, track.name, track.artists, track.album_name, folderName, originalIndex + 1, track.spotify_id, track.duration_ms, isAlbum, releaseYear, track.album_artist || "", track.release_date, track.images, track.track_number, track.disc_number, track.total_tracks, track.total_discs, track.copyright, track.publisher);
-                if (response.success) {
-                    if (response.already_exists) {
-                        skippedCount++;
-                        logger.info(`skipped: ${track.name} - ${displayArtist} (already exists)`);
-                        setSkippedTracks((prev) => new Set(prev).add(id));
+            const maxRetries = settings.maxRetries || 0;
+            for (let attempt = 0; attempt <= maxRetries; attempt++) {
+                if (attempt > 0) {
+                    logger.warning(`retry ${attempt}/${maxRetries}: ${track.name} - ${displayArtist}`);
+                    await new Promise((r) => setTimeout(r, 2000));
+                }
+                try {
+                    const releaseYear = track.release_date?.substring(0, 4);
+                    const response = await downloadWithItemID(settings, itemID, track.name, track.artists, track.album_name, folderName, originalIndex + 1, track.spotify_id, track.duration_ms, isAlbum, releaseYear, track.album_artist || "", track.release_date, track.images, track.track_number, track.disc_number, track.total_tracks, track.total_discs, track.copyright, track.publisher);
+                    if (response.success) {
+                        if (response.already_exists) {
+                            skippedCount++;
+                            logger.info(`skipped: ${track.name} - ${displayArtist} (already exists)`);
+                            setSkippedTracks((prev) => new Set(prev).add(id));
+                        }
+                        else {
+                            successCount++;
+                            logger.success(`downloaded: ${track.name} - ${displayArtist}`);
+                        }
+                        if (response.file) {
+                            finalFilePaths.set(id, response.file);
+                            finalFilePaths.set(track.spotify_id || id, response.file);
+                        }
+                        setDownloadedTracks((prev) => new Set(prev).add(id));
+                        setFailedTracks((prev) => {
+                            const newSet = new Set(prev);
+                            newSet.delete(id);
+                            return newSet;
+                        });
+                        break;
                     }
                     else {
-                        successCount++;
-                        logger.success(`downloaded: ${track.name} - ${displayArtist}`);
+                        if (attempt < maxRetries) continue;
+                        errorCount++;
+                        logger.error(`failed: ${track.name} - ${displayArtist}`);
+                        setFailedTracks((prev) => new Set(prev).add(id));
                     }
-                    if (response.file) {
-                        finalFilePaths.set(id, response.file);
-                        finalFilePaths.set(track.spotify_id || id, response.file);
-                    }
-                    setDownloadedTracks((prev) => new Set(prev).add(id));
-                    setFailedTracks((prev) => {
-                        const newSet = new Set(prev);
-                        newSet.delete(id);
-                        return newSet;
-                    });
                 }
-                else {
+                catch (err) {
+                    if (attempt < maxRetries) continue;
                     errorCount++;
-                    logger.error(`failed: ${track.name} - ${displayArtist}`);
+                    logger.error(`error: ${track.name} - ${err}`);
                     setFailedTracks((prev) => new Set(prev).add(id));
-                }
-            }
-            catch (err) {
-                errorCount++;
-                logger.error(`error: ${track.name} - ${err}`);
-                setFailedTracks((prev) => new Set(prev).add(id));
-                if (itemID) {
-                    const { MarkDownloadItemFailed } = await import("../../wailsjs/go/main/App");
-                    await MarkDownloadItemFailed(itemID, err instanceof Error ? err.message : String(err));
+                    if (itemID) {
+                        const { MarkDownloadItemFailed } = await import("../../wailsjs/go/main/App");
+                        await MarkDownloadItemFailed(itemID, err instanceof Error ? err.message : String(err));
+                    }
                 }
             }
             const completedCount = skippedCount + successCount + errorCount;
@@ -937,41 +947,51 @@ export function useDownload(region: string) {
             setDownloadingTrack(trackId);
             const displayArtist = settings.useFirstArtistOnly && track.artists ? getFirstArtist(track.artists) : track.artists;
             setCurrentDownloadInfo({ name: track.name || "", artists: displayArtist || "" });
-            try {
-                const releaseYear = track.release_date?.substring(0, 4);
-                const response = await downloadWithItemID(settings, itemID, track.name, track.artists, track.album_name, folderName, originalIndex + 1, track.spotify_id, track.duration_ms, isAlbum, releaseYear, track.album_artist || "", track.release_date, track.images, track.track_number, track.disc_number, track.total_tracks, track.total_discs, track.copyright, track.publisher);
-                if (response.success) {
-                    if (response.already_exists) {
-                        skippedCount++;
-                        logger.info(`skipped: ${track.name} - ${displayArtist} (already exists)`);
-                        setSkippedTracks((prev) => new Set(prev).add(trackId));
+            const maxRetries = settings.maxRetries || 0;
+            for (let attempt = 0; attempt <= maxRetries; attempt++) {
+                if (attempt > 0) {
+                    logger.warning(`retry ${attempt}/${maxRetries}: ${track.name} - ${displayArtist}`);
+                    await new Promise((r) => setTimeout(r, 2000));
+                }
+                try {
+                    const releaseYear = track.release_date?.substring(0, 4);
+                    const response = await downloadWithItemID(settings, itemID, track.name, track.artists, track.album_name, folderName, originalIndex + 1, track.spotify_id, track.duration_ms, isAlbum, releaseYear, track.album_artist || "", track.release_date, track.images, track.track_number, track.disc_number, track.total_tracks, track.total_discs, track.copyright, track.publisher);
+                    if (response.success) {
+                        if (response.already_exists) {
+                            skippedCount++;
+                            logger.info(`skipped: ${track.name} - ${displayArtist} (already exists)`);
+                            setSkippedTracks((prev) => new Set(prev).add(trackId));
+                        }
+                        else {
+                            successCount++;
+                            logger.success(`downloaded: ${track.name} - ${displayArtist}`);
+                        }
+                        setDownloadedTracks((prev) => new Set(prev).add(trackId));
+                        setFailedTracks((prev) => {
+                            const newSet = new Set(prev);
+                            newSet.delete(trackId);
+                            return newSet;
+                        });
+                        if (response.file) {
+                            finalFilePaths[originalIndex] = response.file;
+                        }
+                        break;
                     }
                     else {
-                        successCount++;
-                        logger.success(`downloaded: ${track.name} - ${displayArtist}`);
-                    }
-                    setDownloadedTracks((prev) => new Set(prev).add(trackId));
-                    setFailedTracks((prev) => {
-                        const newSet = new Set(prev);
-                        newSet.delete(trackId);
-                        return newSet;
-                    });
-                    if (response.file) {
-                        finalFilePaths[originalIndex] = response.file;
+                        if (attempt < maxRetries) continue;
+                        errorCount++;
+                        logger.error(`failed: ${track.name} - ${displayArtist}`);
+                        setFailedTracks((prev) => new Set(prev).add(trackId));
                     }
                 }
-                else {
+                catch (err) {
+                    if (attempt < maxRetries) continue;
                     errorCount++;
-                    logger.error(`failed: ${track.name} - ${displayArtist}`);
+                    logger.error(`error: ${track.name} - ${err}`);
                     setFailedTracks((prev) => new Set(prev).add(trackId));
+                    const { MarkDownloadItemFailed } = await import("../../wailsjs/go/main/App");
+                    await MarkDownloadItemFailed(itemID, err instanceof Error ? err.message : String(err));
                 }
-            }
-            catch (err) {
-                errorCount++;
-                logger.error(`error: ${track.name} - ${err}`);
-                setFailedTracks((prev) => new Set(prev).add(trackId));
-                const { MarkDownloadItemFailed } = await import("../../wailsjs/go/main/App");
-                await MarkDownloadItemFailed(itemID, err instanceof Error ? err.message : String(err));
             }
             const completedCount = skippedCount + successCount + errorCount;
             setDownloadProgress(Math.min(100, Math.round((completedCount / total) * 100)));

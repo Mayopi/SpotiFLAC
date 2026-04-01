@@ -145,10 +145,9 @@ func (t *TidalDownloader) GetDownloadURL(trackID int64, quality string) (string,
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		err := httpError("Tidal API", resp)
-		fmt.Printf("✗ %v\n", err)
-		return "", err
+	if resp.StatusCode != 200 {
+		fmt.Printf("✗ Tidal API returned status code: %d\n", resp.StatusCode)
+		return "", fmt.Errorf("API returned status code: %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -210,8 +209,8 @@ func (t *TidalDownloader) DownloadFile(url, filepath string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return httpError("Tidal Download", resp)
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("download failed with status %d", resp.StatusCode)
 	}
 
 	out, err := os.Create(filepath)
@@ -260,8 +259,8 @@ func (t *TidalDownloader) DownloadFromManifest(manifestB64, outputPath string) e
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusOK {
-			return httpError("Tidal Manifest Download", resp)
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("download failed with status %d", resp.StatusCode)
 		}
 
 		out, err := os.Create(outputPath)
@@ -292,8 +291,8 @@ func (t *TidalDownloader) DownloadFromManifest(manifestB64, outputPath string) e
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusOK {
-			return httpError("Tidal Manifest Download", resp)
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("download failed with status %d", resp.StatusCode)
 		}
 
 		out, err := os.Create(tempPath)
@@ -328,12 +327,11 @@ func (t *TidalDownloader) DownloadFromManifest(manifestB64, outputPath string) e
 			os.Remove(tempPath)
 			return fmt.Errorf("failed to download init segment: %w", err)
 		}
-		if resp.StatusCode != http.StatusOK {
-			err := httpError("Tidal Init Segment", resp)
+		if resp.StatusCode != 200 {
 			resp.Body.Close()
 			out.Close()
 			os.Remove(tempPath)
-			return err
+			return fmt.Errorf("init segment download failed with status %d", resp.StatusCode)
 		}
 		_, err = io.Copy(out, resp.Body)
 		resp.Body.Close()
@@ -355,12 +353,11 @@ func (t *TidalDownloader) DownloadFromManifest(manifestB64, outputPath string) e
 				os.Remove(tempPath)
 				return fmt.Errorf("failed to download segment %d: %w", i+1, err)
 			}
-			if resp.StatusCode != http.StatusOK {
-				err := fmt.Errorf("segment %d: %w", i+1, httpError("Tidal Media Segment", resp))
+			if resp.StatusCode != 200 {
 				resp.Body.Close()
 				out.Close()
 				os.Remove(tempPath)
-				return err
+				return fmt.Errorf("segment %d download failed with status %d", i+1, resp.StatusCode)
 			}
 			n, err := io.Copy(out, resp.Body)
 			totalBytes += n
@@ -932,9 +929,9 @@ func getDownloadURLRotated(apis []string, trackID int64, quality string) (string
 			continue
 		}
 
-		if resp.StatusCode != http.StatusOK {
-			lastError = httpError("Tidal API", resp)
+		if resp.StatusCode != 200 {
 			resp.Body.Close()
+			lastError = fmt.Errorf("HTTP %d", resp.StatusCode)
 			errors = append(errors, fmt.Sprintf("%s: %v", apiURL, lastError))
 			continue
 		}

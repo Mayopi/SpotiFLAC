@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Trash2, Copy, Check, FileDown } from "lucide-react";
+import { Trash2, Copy, Check, FileDown, ChevronRight, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { logger, type LogEntry } from "@/lib/logger";
 import { useDownloadQueueData } from "@/hooks/useDownloadQueueData";
@@ -20,6 +20,60 @@ function formatTime(date: Date): string {
         second: "2-digit",
     });
 }
+
+function isCodeLike(message: string): boolean {
+    return /HTTP|status\s*[:\d]|[\{}\[\]]|https?:\/\/\S+[?&=]/.test(message);
+}
+
+function LogEntryRow({ log }: { log: LogEntry }) {
+    const [expanded, setExpanded] = useState(false);
+    const message = log.message;
+    const long = message.length > 120;
+    const codeLike = isCodeLike(message);
+    const needsExpand = long || codeLike;
+
+    if (!needsExpand) {
+        return (
+            <div className="flex gap-2 py-0.5">
+                <span className="text-muted-foreground shrink-0">
+                    [{formatTime(log.timestamp)}]
+                </span>
+                <span className={`shrink-0 w-16 ${levelColors[log.level]}`}>
+                    [{log.level}]
+                </span>
+                <span className="break-all">{message}</span>
+            </div>
+        );
+    }
+
+    const preview = long ? message.slice(0, 120) + "..." : message;
+
+    return (
+        <div className="py-0.5">
+            <div
+                className="flex gap-2 cursor-pointer select-none hover:bg-muted/50 rounded"
+                onClick={() => setExpanded((prev) => !prev)}
+            >
+                <span className="text-muted-foreground shrink-0">
+                    [{formatTime(log.timestamp)}]
+                </span>
+                <span className={`shrink-0 w-16 ${levelColors[log.level]}`}>
+                    [{log.level}]
+                </span>
+                <span className="shrink-0 text-muted-foreground">
+                    {expanded ? <ChevronDown className="h-3 w-3 inline" /> : <ChevronRight className="h-3 w-3 inline" />}
+                </span>
+                {!expanded && <span className="break-all text-muted-foreground">{preview}</span>}
+            </div>
+            {expanded && (
+                <pre className="bg-muted rounded px-2 py-1 mt-1 ml-[calc(theme(spacing.16)+theme(spacing.2))] whitespace-pre-wrap break-all text-[11px] leading-relaxed overflow-x-auto max-h-60 overflow-y-auto">
+                    {message}
+                </pre>
+            )}
+        </div>
+    );
+}
+
 export function DebugLoggerPage() {
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [copied, setCopied] = useState(false);
@@ -99,15 +153,9 @@ export function DebugLoggerPage() {
       </div>
 
       <div ref={scrollRef} className="h-[calc(100vh-220px)] overflow-y-auto bg-muted/50 rounded-lg p-4 font-mono text-xs">
-        {logs.length === 0 ? (<p className="text-muted-foreground lowercase">no logs yet...</p>) : (logs.map((log, i) => (<div key={i} className="flex gap-2 py-0.5">
-              <span className="text-muted-foreground shrink-0">
-                [{formatTime(log.timestamp)}]
-              </span>
-              <span className={`shrink-0 w-16 ${levelColors[log.level]}`}>
-                [{log.level}]
-              </span>
-              <span className="break-all">{log.message}</span>
-            </div>)))}
+        {logs.length === 0 ? (<p className="text-muted-foreground lowercase">no logs yet...</p>) : (logs.map((log, i) => (
+            <LogEntryRow key={i} log={log} />
+        )))}
       </div>
     </div>);
 }

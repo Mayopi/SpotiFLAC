@@ -408,21 +408,27 @@ func (a *App) DownloadTrack(req DownloadRequest) (DownloadResponse, error) {
 		if req.Service == "qobuz" {
 			go func() {
 				client := backend.NewSongLinkClient()
+				runtime.EventsEmit(a.ctx, "backend:log", "info", fmt.Sprintf("looking up ISRC for %s...", req.TrackName))
 				isrc, err := client.GetISRC(req.SpotifyID)
 				if err != nil {
 					fmt.Printf("⚠ ISRC lookup (song.link/Deezer) failed for %s: %v\n", req.SpotifyID, err)
+					runtime.EventsEmit(a.ctx, "backend:log", "warning", fmt.Sprintf("ISRC lookup (song.link/Deezer) failed for %s: %v", req.TrackName, err))
 				}
 				if isrc == "" {
 					fmt.Println("Retrying ISRC with direct web scraping providers...")
+					runtime.EventsEmit(a.ctx, "backend:log", "debug", fmt.Sprintf("retrying ISRC with web scraping for %s...", req.TrackName))
 					isrc, err = client.GetISRCDirect(req.SpotifyID)
 					if err != nil {
 						fmt.Printf("⚠ ISRC lookup (direct) also failed for %s: %v\n", req.SpotifyID, err)
+						runtime.EventsEmit(a.ctx, "backend:log", "warning", fmt.Sprintf("ISRC web scraping also failed for %s: %v", req.TrackName, err))
 					}
 				}
 				if isrc != "" {
 					fmt.Printf("Found ISRC for Qobuz: %s\n", isrc)
+					runtime.EventsEmit(a.ctx, "backend:log", "success", fmt.Sprintf("found ISRC for %s: %s", req.TrackName, isrc))
 				} else {
 					fmt.Printf("⚠ Could not find ISRC for %s from any provider\n", req.SpotifyID)
+					runtime.EventsEmit(a.ctx, "backend:log", "error", fmt.Sprintf("could not find ISRC for %s from any provider", req.TrackName))
 				}
 				isrcChan <- isrc
 			}()

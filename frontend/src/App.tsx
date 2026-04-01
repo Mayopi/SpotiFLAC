@@ -8,6 +8,7 @@ import { applyTheme } from "@/lib/themes";
 import { OpenFolder, CheckFFmpegInstalled, DownloadFFmpeg, GetBrewPath, InstallFFmpegWithBrew } from "../wailsjs/go/main/App";
 import { EventsOn, EventsOff, Quit } from "../wailsjs/runtime/runtime";
 import { toastWithSound as toast } from "@/lib/toast-with-sound";
+import { logger } from "@/lib/logger";
 import { TitleBar } from "@/components/TitleBar";
 import { Sidebar, type PageType } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
@@ -184,9 +185,20 @@ function App() {
             setShowScrollTop(window.scrollY > 300);
         };
         window.addEventListener("scroll", handleScroll);
+        EventsOn("backend:log", (level: string, message: string) => {
+            const logFn: Record<string, (msg: string) => void> = {
+                info: (m) => logger.info(m),
+                success: (m) => logger.success(m),
+                warning: (m) => logger.warning(m),
+                error: (m) => logger.error(m),
+                debug: (m) => logger.debug(m),
+            };
+            (logFn[level] || logFn.info)(message);
+        });
         return () => {
             mediaQuery.removeEventListener("change", handleChange);
             window.removeEventListener("scroll", handleScroll);
+            EventsOff("backend:log");
         };
     }, []);
     const handleEnableSpotFetchApi = async () => {

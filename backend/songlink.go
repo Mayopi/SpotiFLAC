@@ -255,19 +255,12 @@ func (s *SongLinkClient) GetISRC(spotifyID string) (string, error) {
 		}
 	}
 
-	isrc, lookupErr := s.lookupSpotifyISRC(spotifyID)
-	if lookupErr == nil && isrc != "" {
-		return isrc, nil
-	}
+	// Note: lookupSpotifyISRC is already called inside resolveSpotifyTrackLinks
+	// when song.link fails. Don't call it again here to avoid wasting rate limits
+	// on the web scraping providers during batch downloads.
 
-	if err != nil && lookupErr != nil {
-		return "", fmt.Errorf("%v | %v", err, lookupErr)
-	}
 	if err != nil {
 		return "", err
-	}
-	if lookupErr != nil {
-		return "", lookupErr
 	}
 
 	return "", fmt.Errorf("ISRC not found")

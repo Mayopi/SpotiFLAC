@@ -408,7 +408,22 @@ func (a *App) DownloadTrack(req DownloadRequest) (DownloadResponse, error) {
 		if req.Service == "qobuz" {
 			go func() {
 				client := backend.NewSongLinkClient()
-				isrc, _ := client.GetISRCDirect(req.SpotifyID)
+				isrc, err := client.GetISRC(req.SpotifyID)
+				if err != nil {
+					fmt.Printf("⚠ ISRC lookup (song.link/Deezer) failed for %s: %v\n", req.SpotifyID, err)
+				}
+				if isrc == "" {
+					fmt.Println("Retrying ISRC with direct web scraping providers...")
+					isrc, err = client.GetISRCDirect(req.SpotifyID)
+					if err != nil {
+						fmt.Printf("⚠ ISRC lookup (direct) also failed for %s: %v\n", req.SpotifyID, err)
+					}
+				}
+				if isrc != "" {
+					fmt.Printf("Found ISRC for Qobuz: %s\n", isrc)
+				} else {
+					fmt.Printf("⚠ Could not find ISRC for %s from any provider\n", req.SpotifyID)
+				}
 				isrcChan <- isrc
 			}()
 		} else {

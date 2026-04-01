@@ -71,7 +71,7 @@ func GetSpotifyDataWithAPI(ctx context.Context, spotifyURL string, useAPI bool, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("SpotFetch API error: HTTP %d", resp.StatusCode)
+		return nil, httpError("SpotFetch API", resp)
 	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)

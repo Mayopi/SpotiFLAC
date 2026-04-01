@@ -352,7 +352,7 @@ func downloadAndExtract(url, destDir string, progressCallback func(int), progres
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to download: HTTP %d", resp.StatusCode)
+		return httpError("FFmpeg Download", resp)
 	}
 
 	totalSize := resp.ContentLength

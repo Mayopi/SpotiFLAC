@@ -90,8 +90,8 @@ func (c *LyricsClient) FetchLyricsWithMetadata(trackName, artistName, albumName 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("LRCLIB returned status %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return nil, httpError("LRCLIB", resp)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -182,8 +182,8 @@ func (c *LyricsClient) FetchLyricsFromLRCLibSearch(trackName, artistName string)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return nil, httpError("LRCLIB Search", resp)
 	}
 
 	body, err := io.ReadAll(resp.Body)

@@ -222,8 +222,8 @@ func getDeezerISRC(deezerURL string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("Deezer API returned status %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return "", httpError("Deezer API", resp)
 	}
 
 	var deezerTrack struct {
@@ -370,8 +370,7 @@ func (s *SongLinkClient) fetchSongLinkLinksByURL(rawURL string, region string) (
 		return nil, errSongLinkRateLimited
 	}
 	if resp.StatusCode != http.StatusOK {
-		bodyPreview, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
-		return nil, fmt.Errorf("song.link returned status %d (%s)", resp.StatusCode, strings.TrimSpace(string(bodyPreview)))
+		return nil, httpError("song.link", resp)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -455,7 +454,7 @@ func (s *SongLinkClient) lookupISRCViaISRCFinder(spotifyURL string) (string, err
 		return "", fmt.Errorf("failed to read isrcfinder response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("isrcfinder returned status %d", resp.StatusCode)
+		return "", httpError("ISRCFinder", resp)
 	}
 
 	token := extractCSRFToken(string(body))
@@ -496,7 +495,7 @@ func (s *SongLinkClient) lookupISRCViaISRCFinder(spotifyURL string) (string, err
 		return "", fmt.Errorf("failed to read isrcfinder POST response: %w", err)
 	}
 	if postResp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("isrcfinder POST returned status %d", postResp.StatusCode)
+		return "", httpError("ISRCFinder POST", postResp)
 	}
 
 	isrc := firstISRCMatch(string(postBody))
@@ -528,7 +527,7 @@ func lookupISRCViaPHPStack(spotifyURL string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("phpstack returned status %d", resp.StatusCode)
+		return "", httpError("PHPStack ISRC", resp)
 	}
 
 	var payload struct {
@@ -573,7 +572,7 @@ func lookupISRCViaFindMyISRC(spotifyURL string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("findmyisrc returned status %d", resp.StatusCode)
+		return "", httpError("FindMyISRC", resp)
 	}
 
 	var payload []struct {
@@ -627,7 +626,7 @@ func lookupISRCViaMixvibe(spotifyURL string) (string, error) {
 		return "", fmt.Errorf("failed to read mixvibe response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("mixvibe returned status %d", resp.StatusCode)
+		return "", httpError("Mixvibe ISRC", resp)
 	}
 
 	var payload interface{}
@@ -660,7 +659,7 @@ func (s *SongLinkClient) populateLinksFromSongstats(links *resolvedTrackLinks, i
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Songstats returned status %d", resp.StatusCode)
+		return httpError("Songstats", resp)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -719,7 +718,7 @@ func (s *SongLinkClient) lookupDeezerTrackURLByISRC(isrc string) (string, error)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Deezer ISRC API returned status %d", resp.StatusCode)
+		return "", httpError("Deezer ISRC API", resp)
 	}
 
 	var payload struct {

@@ -85,8 +85,8 @@ func (c *SpotifyClient) getAccessToken() error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("%w: access token request failed: HTTP %d", SpotifyError, resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%w: %v", SpotifyError, httpError("Spotify Access Token", resp))
 	}
 
 	var data map[string]interface{}
@@ -125,8 +125,8 @@ func (c *SpotifyClient) getSessionInfo() error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("%w: session initialization failed: HTTP %d", SpotifyError, resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%w: %v", SpotifyError, httpError("Spotify Session Init", resp))
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -202,8 +202,8 @@ func (c *SpotifyClient) getClientToken() error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("%w: client token request failed: HTTP %d", SpotifyError, resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%w: %v", SpotifyError, httpError("Spotify Client Token", resp))
 	}
 
 	var data map[string]interface{}
@@ -265,12 +265,13 @@ func (c *SpotifyClient) Query(payload map[string]interface{}) (map[string]interf
 		return nil, err
 	}
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		errorText := string(body)
-		if len(errorText) > 200 {
-			errorText = errorText[:200]
+		if len(errorText) > 512 {
+			errorText = errorText[:512]
 		}
-		return nil, fmt.Errorf("%w: API query failed: HTTP %d | %s", SpotifyError, resp.StatusCode, errorText)
+		return nil, fmt.Errorf("%w: [Spotify API Query] HTTP %d %s | URL: %s | Response: %s",
+			SpotifyError, resp.StatusCode, http.StatusText(resp.StatusCode), req.URL.String(), strings.TrimSpace(errorText))
 	}
 
 	var result map[string]interface{}

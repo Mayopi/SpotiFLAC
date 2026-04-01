@@ -159,7 +159,7 @@ func (c *CoverClient) DownloadCoverToPath(coverURL, outputPath string, embedMaxQ
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to download cover: HTTP %d", resp.StatusCode)
+		return httpError("Cover Download", resp)
 	}
 
 	file, err := os.Create(outputPath)
@@ -289,10 +289,11 @@ func (c *CoverClient) DownloadCover(req CoverDownloadRequest) (*CoverDownloadRes
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		err := httpError("Cover Download", resp)
 		return &CoverDownloadResponse{
 			Success: false,
-			Error:   fmt.Sprintf("failed to download cover: HTTP %d", resp.StatusCode),
-		}, fmt.Errorf("HTTP %d", resp.StatusCode)
+			Error:   err.Error(),
+		}, err
 	}
 
 	file, err := os.Create(filePath)
@@ -371,10 +372,11 @@ func (c *CoverClient) DownloadHeader(req HeaderDownloadRequest) (*HeaderDownload
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		err := httpError("Header Download", resp)
 		return &HeaderDownloadResponse{
 			Success: false,
-			Error:   fmt.Sprintf("failed to download header: HTTP %d", resp.StatusCode),
-		}, fmt.Errorf("HTTP %d", resp.StatusCode)
+			Error:   err.Error(),
+		}, err
 	}
 
 	file, err := os.Create(filePath)
@@ -468,10 +470,11 @@ func (c *CoverClient) DownloadGalleryImage(req GalleryImageDownloadRequest) (*Ga
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		err := httpError("Gallery Image Download", resp)
 		return &GalleryImageDownloadResponse{
 			Success: false,
-			Error:   fmt.Sprintf("failed to download gallery image: HTTP %d", resp.StatusCode),
-		}, fmt.Errorf("HTTP %d", resp.StatusCode)
+			Error:   err.Error(),
+		}, err
 	}
 
 	file, err := os.Create(filePath)
@@ -564,10 +567,11 @@ func (c *CoverClient) DownloadAvatar(req AvatarDownloadRequest) (*AvatarDownload
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		err := httpError("Avatar Download", resp)
 		return &AvatarDownloadResponse{
 			Success: false,
-			Error:   fmt.Sprintf("failed to download avatar: HTTP %d", resp.StatusCode),
-		}, fmt.Errorf("HTTP %d", resp.StatusCode)
+			Error:   err.Error(),
+		}, err
 	}
 
 	file, err := os.Create(filePath)

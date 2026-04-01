@@ -1565,8 +1565,8 @@ func GetPreviewURL(trackID string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("embed page returned status %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return "", httpError("Spotify Embed", resp)
 	}
 
 	body, err := io.ReadAll(resp.Body)

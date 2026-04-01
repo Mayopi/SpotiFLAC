@@ -70,8 +70,8 @@ func (a *AmazonDownloader) DownloadFromAfkarXYZ(amazonURL, outputDir, quality st
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("Amazon API returned status %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return "", httpError("Amazon API", resp)
 	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)

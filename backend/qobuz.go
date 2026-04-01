@@ -87,8 +87,8 @@ func (q *QobuzDownloader) searchByISRC(isrc string) (*QobuzTrack, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return nil, httpError("Qobuz Search", resp)
 	}
 
 	var searchResp QobuzSearchResponse
@@ -133,8 +133,8 @@ func (q *QobuzDownloader) DownloadFromStandard(apiBase string, trackID int64, qu
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("status %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return "", httpError("Qobuz Stream", resp)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -143,7 +143,7 @@ func (q *QobuzDownloader) DownloadFromStandard(apiBase string, trackID int64, qu
 	}
 
 	if len(body) == 0 {
-		return "", fmt.Errorf("empty body")
+		return "", fmt.Errorf("[Qobuz Stream] empty response body from %s", apiURL)
 	}
 
 	var streamResp QobuzStreamResponse
@@ -258,8 +258,8 @@ func (q *QobuzDownloader) DownloadFile(url, filepath string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("download failed with status %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return httpError("Qobuz Download", resp)
 	}
 
 	fmt.Printf("Creating file: %s\n", filepath)
@@ -292,8 +292,8 @@ func (q *QobuzDownloader) DownloadCoverArt(coverURL, filepath string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("cover download failed with status %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return httpError("Qobuz Cover", resp)
 	}
 
 	out, err := os.Create(filepath)

@@ -102,8 +102,9 @@ func FetchMusicBrainzMetadata(isrc, title, artist, album string, useSingleGenre 
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		err := httpError("MusicBrainz", resp)
 		resp.Body.Close()
-		return meta, fmt.Errorf("MusicBrainz API returned status: %d", resp.StatusCode)
+		return meta, err
 	}
 	defer resp.Body.Close()
 

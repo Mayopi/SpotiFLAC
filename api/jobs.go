@@ -20,6 +20,15 @@ type TrackJob struct {
 	TrackName   string    `json:"track_name"`
 	ArtistName  string    `json:"artist_name"`
 	SpotifyID   string    `json:"spotify_id"`
+	AlbumName   string    `json:"album_name,omitempty"`
+	AlbumArtist string    `json:"album_artist,omitempty"`
+	CoverURL    string    `json:"cover_url,omitempty"`
+	ReleaseDate string    `json:"release_date,omitempty"`
+	TrackNumber int       `json:"track_number,omitempty"`
+	DiscNumber  int       `json:"disc_number,omitempty"`
+	TotalTracks int       `json:"total_tracks,omitempty"`
+	TotalDiscs  int       `json:"total_discs,omitempty"`
+	DurationMS  int       `json:"duration_ms,omitempty"`
 	Status      JobStatus `json:"status"`
 	Error       string    `json:"error,omitempty"`
 	FilePath    string    `json:"file_path,omitempty"`

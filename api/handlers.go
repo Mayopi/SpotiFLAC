@@ -94,7 +94,7 @@ func parseSpotifyType(url string) string {
 
 func (req *DownloadRequest) allowFallbackValue() bool {
 	if req.AllowFallback == nil {
-		return true // default to true
+		return true
 	}
 	return *req.AllowFallback
 }
@@ -156,7 +156,6 @@ func (h *Handler) StartDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply defaults
 	if req.Service == "" {
 		req.Service = "tidal"
 	}
@@ -188,7 +187,6 @@ func (h *Handler) StartDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jobID := fmt.Sprintf("job-%d", time.Now().UnixNano())
-
 	job := &Job{
 		ID:          jobID,
 		Status:      JobStatusPending,
@@ -245,7 +243,6 @@ func (h *Handler) processDownloadJob(ctx context.Context, jobID string, req Down
 	h.jobs.SetTracks(jobID, tracks)
 	h.jobs.UpdateStatus(jobID, JobStatusDownloading)
 
-	// Concurrent download with semaphore
 	sem := make(chan struct{}, req.MaxConcurrent)
 	done := make(chan struct{})
 
@@ -285,6 +282,17 @@ func (h *Handler) processDownloadJob(ctx context.Context, jobID string, req Down
 	}
 }
 
+// trackMetaFromSpotify is the metadata struct used for parsing per-track enrichment
+type trackMetaFromSpotify struct {
+	Copyright   string `json:"copyright"`
+	Publisher   string `json:"publisher"`
+	TotalDiscs  int    `json:"total_discs"`
+	TotalTracks int    `json:"total_tracks"`
+	TrackNumber int    `json:"track_number"`
+	ReleaseDate string `json:"release_date"`
+	CoverURL    string `json:"images"`
+}
+
 func (h *Handler) extractTracks(data interface{}, jobID string) []TrackJob {
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -296,90 +304,108 @@ func (h *Handler) extractTracks(data interface{}, jobID string) []TrackJob {
 	// Try single track
 	var trackResp struct {
 		Track struct {
-			SpotifyID string `json:"spotify_id"`
-			Name      string `json:"name"`
-			Artists   string `json:"artists"`
-			AlbumName string `json:"album_name"`
+			SpotifyID   string `json:"spotify_id"`
+			Name        string `json:"name"`
+			Artists     string `json:"artists"`
+			AlbumName   string `json:"album_name"`
+			AlbumArtist string `json:"album_artist"`
+			DurationMS  int    `json:"duration_ms"`
+			Images      string `json:"images"`
+			ReleaseDate string `json:"release_date"`
+			TrackNumber int    `json:"track_number"`
+			TotalTracks int    `json:"total_tracks"`
+			DiscNumber  int    `json:"disc_number"`
+			TotalDiscs  int    `json:"total_discs"`
 		} `json:"track"`
 	}
 	if json.Unmarshal(jsonBytes, &trackResp) == nil && trackResp.Track.Name != "" {
 		h.jobs.SetMetaName(jobID, trackResp.Track.Name)
+		t := trackResp.Track
 		return []TrackJob{{
-			TrackName:  trackResp.Track.Name,
-			ArtistName: trackResp.Track.Artists,
-			SpotifyID:  trackResp.Track.SpotifyID,
-			Status:     JobStatusPending,
+			TrackName:   t.Name,
+			ArtistName:  t.Artists,
+			SpotifyID:   t.SpotifyID,
+			AlbumName:   t.AlbumName,
+			AlbumArtist: t.AlbumArtist,
+			CoverURL:    t.Images,
+			ReleaseDate: t.ReleaseDate,
+			TrackNumber: t.TrackNumber,
+			DiscNumber:  t.DiscNumber,
+			TotalTracks: t.TotalTracks,
+			TotalDiscs:  t.TotalDiscs,
+			DurationMS:  t.DurationMS,
+			Status:      JobStatusPending,
 		}}
+	}
+
+	// Shared struct for track lists
+	type rawTrack struct {
+		SpotifyID   string `json:"spotify_id"`
+		Name        string `json:"name"`
+		Artists     string `json:"artists"`
+		AlbumName   string `json:"album_name"`
+		AlbumArtist string `json:"album_artist"`
+		DurationMS  int    `json:"duration_ms"`
+		Images      string `json:"images"`
+		ReleaseDate string `json:"release_date"`
+		TrackNumber int    `json:"track_number"`
+		TotalTracks int    `json:"total_tracks"`
+		DiscNumber  int    `json:"disc_number"`
+		TotalDiscs  int    `json:"total_discs"`
+	}
+	toTrackJob := func(t rawTrack) TrackJob {
+		return TrackJob{
+			TrackName:   t.Name,
+			ArtistName:  t.Artists,
+			SpotifyID:   t.SpotifyID,
+			AlbumName:   t.AlbumName,
+			AlbumArtist: t.AlbumArtist,
+			CoverURL:    t.Images,
+			ReleaseDate: t.ReleaseDate,
+			TrackNumber: t.TrackNumber,
+			DiscNumber:  t.DiscNumber,
+			TotalTracks: t.TotalTracks,
+			TotalDiscs:  t.TotalDiscs,
+			DurationMS:  t.DurationMS,
+			Status:      JobStatusPending,
+		}
 	}
 
 	// Try album
 	var albumResp struct {
-		AlbumInfo struct {
-			Name string `json:"name"`
-		} `json:"album_info"`
-		TrackList []struct {
-			SpotifyID string `json:"spotify_id"`
-			Name      string `json:"name"`
-			Artists   string `json:"artists"`
-		} `json:"track_list"`
+		AlbumInfo struct{ Name string `json:"name"` } `json:"album_info"`
+		TrackList []rawTrack                           `json:"track_list"`
 	}
 	if json.Unmarshal(jsonBytes, &albumResp) == nil && len(albumResp.TrackList) > 0 {
 		h.jobs.SetMetaName(jobID, albumResp.AlbumInfo.Name)
 		for _, t := range albumResp.TrackList {
-			tracks = append(tracks, TrackJob{
-				TrackName:  t.Name,
-				ArtistName: t.Artists,
-				SpotifyID:  t.SpotifyID,
-				Status:     JobStatusPending,
-			})
+			tracks = append(tracks, toTrackJob(t))
 		}
 		return tracks
 	}
 
 	// Try playlist
 	var playlistResp struct {
-		PlaylistInfo struct {
-			Name string `json:"name"`
-		} `json:"playlist_info"`
-		TrackList []struct {
-			SpotifyID string `json:"spotify_id"`
-			Name      string `json:"name"`
-			Artists   string `json:"artists"`
-		} `json:"track_list"`
+		PlaylistInfo struct{ Name string `json:"name"` } `json:"playlist_info"`
+		TrackList    []rawTrack                           `json:"track_list"`
 	}
 	if json.Unmarshal(jsonBytes, &playlistResp) == nil && len(playlistResp.TrackList) > 0 {
 		h.jobs.SetMetaName(jobID, playlistResp.PlaylistInfo.Name)
 		for _, t := range playlistResp.TrackList {
-			tracks = append(tracks, TrackJob{
-				TrackName:  t.Name,
-				ArtistName: t.Artists,
-				SpotifyID:  t.SpotifyID,
-				Status:     JobStatusPending,
-			})
+			tracks = append(tracks, toTrackJob(t))
 		}
 		return tracks
 	}
 
 	// Try artist
 	var artistResp struct {
-		ArtistInfo struct {
-			Name string `json:"name"`
-		} `json:"artist_info"`
-		TrackList []struct {
-			SpotifyID string `json:"spotify_id"`
-			Name      string `json:"name"`
-			Artists   string `json:"artists"`
-		} `json:"track_list"`
+		ArtistInfo struct{ Name string `json:"name"` } `json:"artist_info"`
+		TrackList  []rawTrack                           `json:"track_list"`
 	}
 	if json.Unmarshal(jsonBytes, &artistResp) == nil && len(artistResp.TrackList) > 0 {
 		h.jobs.SetMetaName(jobID, artistResp.ArtistInfo.Name)
 		for _, t := range artistResp.TrackList {
-			tracks = append(tracks, TrackJob{
-				TrackName:  t.Name,
-				ArtistName: t.Artists,
-				SpotifyID:  t.SpotifyID,
-				Status:     JobStatusPending,
-			})
+			tracks = append(tracks, toTrackJob(t))
 		}
 		return tracks
 	}
@@ -387,6 +413,17 @@ func (h *Handler) extractTracks(data interface{}, jobID string) []TrackJob {
 	return nil
 }
 
+// downloadSingleTrack mirrors the logic in app.go DownloadTrack:
+// 1. Enrich metadata from Spotify (copyright, publisher, etc.)
+// 2. Check if file already exists
+// 3. Start lyrics fetch concurrently (if enabled)
+// 4. Start ISRC lookup concurrently (if qobuz)
+// 5. Download with retry + fallback
+// 6. Handle EXISTS: prefix from downloader
+// 7. Validate duration
+// 8. Clean up partial/corrupted files on failure
+// 9. Embed lyrics
+// 10. Upload to Drive
 func (h *Handler) downloadSingleTrack(ctx context.Context, jobID string, idx int, track TrackJob, req DownloadRequest, outDir string) {
 	select {
 	case <-ctx.Done():
@@ -395,37 +432,114 @@ func (h *Handler) downloadSingleTrack(ctx context.Context, jobID string, idx int
 	default:
 	}
 
-	downloadOutDir := outDir
+	// --- Step 1: Enrich metadata from Spotify (same as app.go:315-370) ---
+	copyright := ""
+	publisher := ""
+	releaseDate := track.ReleaseDate
+	trackNumber := track.TrackNumber
+	discNumber := track.DiscNumber
+	totalTracks := track.TotalTracks
+	totalDiscs := track.TotalDiscs
+	coverURL := track.CoverURL
 
-	// Build filename to check if already exists
-	filename := backend.BuildExpectedFilename(
-		track.TrackName, track.ArtistName,
-		"", "", "", // album, albumArtist, releaseDate
-		req.FilenameFormat,
-		"", "",            // playlistName, playlistOwner
-		req.TrackNumber,   // includeTrackNumber
-		idx+1,             // position
-		0,                 // discNumber
-		req.UseAlbumTrackNumber,
-	)
-
-	destPath := filepath.Join(downloadOutDir, filename)
-
-	// Check if already exists
-	if info, err := os.Stat(destPath); err == nil && info.Size() > 100*1024 {
-		h.jobs.UpdateTrack(jobID, idx, JobStatusCompleted, "", destPath, info.Size())
-		return
+	if track.SpotifyID != "" && (releaseDate == "" || totalTracks == 0 || trackNumber == 0 || totalDiscs == 0) {
+		enrichCtx, enrichCancel := context.WithTimeout(ctx, 10*time.Second)
+		trackURL := fmt.Sprintf("https://open.spotify.com/track/%s", track.SpotifyID)
+		trackData, err := backend.GetFilteredSpotifyData(enrichCtx, trackURL, false, 0, req.Separator, nil)
+		enrichCancel()
+		if err == nil {
+			var resp struct {
+				Track trackMetaFromSpotify `json:"track"`
+			}
+			if jsonData, jsonErr := json.Marshal(trackData); jsonErr == nil {
+				if json.Unmarshal(jsonData, &resp) == nil {
+					if copyright == "" && resp.Track.Copyright != "" {
+						copyright = resp.Track.Copyright
+					}
+					if publisher == "" && resp.Track.Publisher != "" {
+						publisher = resp.Track.Publisher
+					}
+					if totalDiscs == 0 && resp.Track.TotalDiscs > 0 {
+						totalDiscs = resp.Track.TotalDiscs
+					}
+					if totalTracks == 0 && resp.Track.TotalTracks > 0 {
+						totalTracks = resp.Track.TotalTracks
+					}
+					if trackNumber == 0 && resp.Track.TrackNumber > 0 {
+						trackNumber = resp.Track.TrackNumber
+					}
+					if releaseDate == "" && resp.Track.ReleaseDate != "" {
+						releaseDate = resp.Track.ReleaseDate
+					}
+					if coverURL == "" && resp.Track.CoverURL != "" {
+						coverURL = resp.Track.CoverURL
+					}
+				}
+			}
+		}
 	}
 
-	// Ensure output directory exists
+	spotifyURL := ""
+	if track.SpotifyID != "" {
+		spotifyURL = fmt.Sprintf("https://open.spotify.com/track/%s", track.SpotifyID)
+	}
+
+	downloadOutDir := outDir
 	if err := os.MkdirAll(downloadOutDir, 0755); err != nil {
 		h.jobs.UpdateTrack(jobID, idx, JobStatusFailed, fmt.Sprintf("mkdir failed: %v", err), "", 0)
 		return
 	}
 
-	// Retry loop
+	// --- Step 2: Check if file already exists (same as app.go:373-388) ---
+	if track.TrackName != "" && track.ArtistName != "" {
+		expectedFilename := backend.BuildExpectedFilename(
+			track.TrackName, track.ArtistName, track.AlbumName, track.AlbumArtist,
+			releaseDate, req.FilenameFormat, "", "",
+			req.TrackNumber, idx+1, discNumber, req.UseAlbumTrackNumber,
+		)
+		expectedPath := filepath.Join(downloadOutDir, expectedFilename)
+		if info, err := os.Stat(expectedPath); err == nil && info.Size() > 100*1024 {
+			h.jobs.UpdateTrack(jobID, idx, JobStatusCompleted, "", expectedPath, info.Size())
+			return
+		}
+	}
+
+	// --- Step 3: Start lyrics fetch concurrently (same as app.go:390-407) ---
+	lyricsChan := make(chan string, 1)
+	if req.EmbedLyrics && track.SpotifyID != "" {
+		go func() {
+			client := backend.NewLyricsClient()
+			resp, _, err := client.FetchLyricsAllSources(track.SpotifyID, track.TrackName, track.ArtistName, track.AlbumName, track.DurationMS)
+			if err == nil && resp != nil {
+				lrc := client.ConvertToLRC(resp, track.TrackName, track.ArtistName)
+				lyricsChan <- lrc
+			} else {
+				lyricsChan <- ""
+			}
+		}()
+	} else {
+		close(lyricsChan)
+	}
+
+	// --- Step 4: Start ISRC lookup concurrently for Qobuz (same as app.go:409-429) ---
+	isrcChan := make(chan string, 1)
+	if track.SpotifyID != "" && req.Service == "qobuz" {
+		go func() {
+			client := backend.NewSongLinkClient()
+			isrc, err := client.GetISRCDirect(track.SpotifyID)
+			if err != nil {
+				log.Printf("ISRC lookup failed for %s: %v", track.SpotifyID, err)
+			}
+			isrcChan <- isrc
+		}()
+	} else {
+		close(isrcChan)
+	}
+
+	// --- Step 5: Download with retry (same logic as app.go:435-478) ---
 	var downloadErr error
-	var resultPath string
+	var filename string
+
 	for attempt := 0; attempt < req.MaxRetries; attempt++ {
 		select {
 		case <-ctx.Done():
@@ -436,20 +550,72 @@ func (h *Handler) downloadSingleTrack(ctx context.Context, jobID string, idx int
 
 		switch req.Service {
 		case "tidal":
-			resultPath, downloadErr = h.downloadViaTidal(track, req, downloadOutDir, idx)
+			dl := backend.NewTidalDownloader("")
+			filename, downloadErr = dl.Download(
+				track.SpotifyID, downloadOutDir, req.AudioFormat, req.FilenameFormat,
+				req.TrackNumber, idx+1,
+				track.TrackName, track.ArtistName, track.AlbumName, track.AlbumArtist, releaseDate,
+				req.UseAlbumTrackNumber, coverURL, req.EmbedMaxQualityCover,
+				trackNumber, discNumber, totalTracks, totalDiscs,
+				copyright, publisher, spotifyURL,
+				req.allowFallbackValue(), req.UseFirstArtistOnly, req.UseSingleGenre, req.EmbedGenre,
+			)
+
 		case "qobuz":
-			resultPath, downloadErr = h.downloadViaQobuz(track, req, downloadOutDir, idx)
+			isrc := <-isrcChan
+			quality := req.AudioFormat
+			if quality == "" {
+				quality = "6"
+			}
+			dl := backend.NewQobuzDownloader()
+			filename, downloadErr = dl.DownloadTrackWithISRC(
+				isrc, track.SpotifyID, downloadOutDir, quality, req.FilenameFormat,
+				req.TrackNumber, idx+1,
+				track.TrackName, track.ArtistName, track.AlbumName, track.AlbumArtist, releaseDate,
+				req.UseAlbumTrackNumber, coverURL, req.EmbedMaxQualityCover,
+				trackNumber, discNumber, totalTracks, totalDiscs,
+				copyright, publisher, spotifyURL,
+				req.allowFallbackValue(), req.UseFirstArtistOnly, req.UseSingleGenre, req.EmbedGenre,
+			)
+
 		default:
-			resultPath, downloadErr = h.downloadViaTidal(track, req, downloadOutDir, idx)
+			dl := backend.NewTidalDownloader("")
+			filename, downloadErr = dl.Download(
+				track.SpotifyID, downloadOutDir, req.AudioFormat, req.FilenameFormat,
+				req.TrackNumber, idx+1,
+				track.TrackName, track.ArtistName, track.AlbumName, track.AlbumArtist, releaseDate,
+				req.UseAlbumTrackNumber, coverURL, req.EmbedMaxQualityCover,
+				trackNumber, discNumber, totalTracks, totalDiscs,
+				copyright, publisher, spotifyURL,
+				req.allowFallbackValue(), req.UseFirstArtistOnly, req.UseSingleGenre, req.EmbedGenre,
+			)
 		}
 
 		if downloadErr == nil {
 			break
 		}
 
+		// Clean up partial/corrupted file on failure (same as app.go:483-491)
+		if filename != "" && !strings.HasPrefix(filename, "EXISTS:") {
+			if _, statErr := os.Stat(filename); statErr == nil {
+				log.Printf("Removing partial file after failed download: %s", filename)
+				os.Remove(filename)
+			}
+		}
+
 		if attempt < req.MaxRetries-1 {
 			log.Printf("Download attempt %d/%d failed for %q: %v, retrying...", attempt+1, req.MaxRetries, track.TrackName, downloadErr)
 			time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+
+			// Re-enqueue ISRC for qobuz retry
+			if req.Service == "qobuz" && track.SpotifyID != "" {
+				isrcChan = make(chan string, 1)
+				go func() {
+					client := backend.NewSongLinkClient()
+					isrc, _ := client.GetISRCDirect(track.SpotifyID)
+					isrcChan <- isrc
+				}()
+			}
 		}
 	}
 
@@ -458,20 +624,54 @@ func (h *Handler) downloadSingleTrack(ctx context.Context, jobID string, idx int
 		return
 	}
 
-	// Embed lyrics if enabled
-	if req.EmbedLyrics && track.SpotifyID != "" && resultPath != "" {
-		h.embedLyrics(track, resultPath)
+	// --- Step 6: Handle EXISTS: prefix (same as app.go:500-504) ---
+	alreadyExists := false
+	if strings.HasPrefix(filename, "EXISTS:") {
+		alreadyExists = true
+		filename = strings.TrimPrefix(filename, "EXISTS:")
 	}
 
+	// --- Step 7: Validate duration (same as app.go:506-521) ---
+	// DurationMS is in milliseconds, ValidateDownloadedTrackDuration expects seconds
+	if !alreadyExists && track.DurationMS > 0 {
+		durationSec := track.DurationMS / 1000
+		validated, validationErr := backend.ValidateDownloadedTrackDuration(filename, durationSec)
+		if validationErr != nil {
+			os.Remove(filename)
+			h.jobs.UpdateTrack(jobID, idx, JobStatusFailed, validationErr.Error(), "", 0)
+			return
+		}
+		if !validated {
+			log.Printf("Skipped duration validation for %s (expected=%dms)", filename, track.DurationMS)
+		}
+	}
+
+	// --- Step 8: Embed lyrics (same as app.go:523-547) ---
+	if !alreadyExists && req.EmbedLyrics && track.SpotifyID != "" &&
+		(strings.HasSuffix(filename, ".flac") || strings.HasSuffix(filename, ".mp3") || strings.HasSuffix(filename, ".m4a")) {
+		lyrics := <-lyricsChan
+		if lyrics != "" {
+			if err := backend.EmbedLyricsOnlyUniversal(filename, lyrics); err != nil {
+				log.Printf("Failed to embed lyrics for %q: %v", track.TrackName, err)
+			}
+		}
+	} else {
+		// Drain the channel
+		select {
+		case <-lyricsChan:
+		default:
+		}
+	}
+
+	// --- Final: update job status ---
 	var fileSize int64
-	if info, err := os.Stat(resultPath); err == nil {
+	if info, err := os.Stat(filename); err == nil {
 		fileSize = info.Size()
 	}
+	h.jobs.UpdateTrack(jobID, idx, JobStatusCompleted, "", filename, fileSize)
 
-	h.jobs.UpdateTrack(jobID, idx, JobStatusCompleted, "", resultPath, fileSize)
-
-	// Upload to Google Drive if enabled
-	if req.UploadToDrive && h.drive != nil && resultPath != "" {
+	// --- Step 9: Upload to Google Drive ---
+	if req.UploadToDrive && h.drive != nil && filename != "" {
 		jobInfo := h.jobs.Get(jobID)
 		folderName := ""
 		if jobInfo != nil {
@@ -481,13 +681,12 @@ func (h *Handler) downloadSingleTrack(ctx context.Context, jobID string, idx int
 		driveCtx, driveCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer driveCancel()
 
-		// Use per-request folder ID, or fall back to job folder name
 		var driveFileID, driveLink string
 		var driveErr error
 		if req.DriveFolderID != "" {
-			driveFileID, driveLink, driveErr = h.drive.Upload(driveCtx, resultPath, req.DriveFolderID)
+			driveFileID, driveLink, driveErr = h.drive.Upload(driveCtx, filename, req.DriveFolderID)
 		} else {
-			driveFileID, driveLink, driveErr = h.drive.UploadWithJobFolder(driveCtx, resultPath, folderName)
+			driveFileID, driveLink, driveErr = h.drive.UploadWithJobFolder(driveCtx, filename, folderName)
 		}
 
 		if driveErr != nil {
@@ -496,85 +695,13 @@ func (h *Handler) downloadSingleTrack(ctx context.Context, jobID string, idx int
 			h.jobs.SetTrackDriveInfo(jobID, idx, driveFileID, driveLink)
 			log.Printf("Uploaded %q to Drive: %s", track.TrackName, driveLink)
 
-			// Delete local file after upload if requested
 			if req.DeleteAfterUpload {
-				if err := os.Remove(resultPath); err != nil {
+				if err := os.Remove(filename); err != nil {
 					log.Printf("Warning: failed to delete local file after drive upload: %v", err)
 				}
 			}
 		}
 	}
-}
-
-func (h *Handler) embedLyrics(track TrackJob, filePath string) {
-	lyricsClient := backend.NewLyricsClient()
-	lyrics, _, err := lyricsClient.FetchLyricsAllSources(track.SpotifyID, track.TrackName, track.ArtistName, "", 0)
-	if err != nil || lyrics == nil {
-		return
-	}
-	lrc := lyricsClient.ConvertToLRC(lyrics, track.TrackName, track.ArtistName)
-	if lrc == "" {
-		return
-	}
-	if err := backend.EmbedLyricsOnlyUniversal(filePath, lrc); err != nil {
-		log.Printf("Failed to embed lyrics for %q: %v", track.TrackName, err)
-	}
-}
-
-func (h *Handler) downloadViaTidal(track TrackJob, req DownloadRequest, outDir string, position int) (string, error) {
-	if track.SpotifyID == "" {
-		return "", fmt.Errorf("no spotify ID for tidal download")
-	}
-	spotifyURL := fmt.Sprintf("https://open.spotify.com/track/%s", track.SpotifyID)
-	dl := backend.NewTidalDownloader("")
-	return dl.Download(
-		track.SpotifyID, outDir, req.AudioFormat, req.FilenameFormat,
-		req.TrackNumber, position,
-		track.TrackName, track.ArtistName, "", "", "", // album, albumArtist, releaseDate
-		req.UseAlbumTrackNumber,
-		"",                       // coverURL
-		req.EmbedMaxQualityCover, // embedMaxQualityCover
-		0, 0, 0, 0,              // trackNumber, discNumber, totalTracks, totalDiscs
-		"", "", spotifyURL,       // copyright, publisher, spotifyURL
-		req.allowFallbackValue(), // allowFallback
-		req.UseFirstArtistOnly,   // useFirstArtistOnly
-		req.UseSingleGenre,       // useSingleGenre
-		req.EmbedGenre,           // embedGenre
-	)
-}
-
-func (h *Handler) downloadViaQobuz(track TrackJob, req DownloadRequest, outDir string, position int) (string, error) {
-	if track.SpotifyID == "" {
-		return "", fmt.Errorf("spotify ID is required for qobuz")
-	}
-
-	slClient := backend.NewSongLinkClient()
-	isrc, err := slClient.GetISRCDirect(track.SpotifyID)
-	if err != nil || isrc == "" {
-		return "", fmt.Errorf("ISRC lookup failed: %v", err)
-	}
-
-	quality := "6" // FLAC 16-bit
-	if req.AudioFormat == "HI_RES_LOSSLESS" {
-		quality = "27"
-	}
-
-	spotifyURL := fmt.Sprintf("https://open.spotify.com/track/%s", track.SpotifyID)
-	dl := backend.NewQobuzDownloader()
-	return dl.DownloadTrackWithISRC(
-		isrc, track.SpotifyID, outDir, quality, req.FilenameFormat,
-		req.TrackNumber, position,
-		track.TrackName, track.ArtistName, "", "", "", // album, albumArtist, releaseDate
-		req.UseAlbumTrackNumber,
-		"",                       // coverURL
-		req.EmbedMaxQualityCover, // embedMaxQualityCover
-		0, 0, 0, 0,              // trackNumber, discNumber, totalTracks, totalDiscs
-		"", "", spotifyURL,       // copyright, publisher, spotifyURL
-		req.allowFallbackValue(), // allowFallback
-		req.UseFirstArtistOnly,   // useFirstArtistOnly
-		req.UseSingleGenre,       // useSingleGenre
-		req.EmbedGenre,           // embedGenre
-	)
 }
 
 // --- Job status endpoints ---
@@ -593,8 +720,6 @@ func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "job_id is required")
 		return
 	}
-
-	// Strip trailing sub-paths like /cancel
 	if idx := strings.Index(jobID, "/"); idx != -1 {
 		jobID = jobID[:idx]
 	}

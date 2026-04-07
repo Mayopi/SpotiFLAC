@@ -17,15 +17,11 @@ FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates tzdata
 
-RUN addgroup -S spotiflac && adduser -S spotiflac -G spotiflac
-
 WORKDIR /app
 
 COPY --from=builder /bin/spotiflac-api /app/spotiflac-api
 
-RUN mkdir -p /downloads && chown spotiflac:spotiflac /downloads
-
-USER spotiflac
+RUN mkdir -p /downloads
 
 ENV PORT=8080
 ENV OUTPUT_DIR=/downloads

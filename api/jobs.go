@@ -17,13 +17,15 @@ const (
 )
 
 type TrackJob struct {
-	TrackName  string    `json:"track_name"`
-	ArtistName string    `json:"artist_name"`
-	SpotifyID  string    `json:"spotify_id"`
-	Status     JobStatus `json:"status"`
-	Error      string    `json:"error,omitempty"`
-	FilePath   string    `json:"file_path,omitempty"`
-	FileSize   int64     `json:"file_size,omitempty"`
+	TrackName   string    `json:"track_name"`
+	ArtistName  string    `json:"artist_name"`
+	SpotifyID   string    `json:"spotify_id"`
+	Status      JobStatus `json:"status"`
+	Error       string    `json:"error,omitempty"`
+	FilePath    string    `json:"file_path,omitempty"`
+	FileSize    int64     `json:"file_size,omitempty"`
+	DriveFileID string    `json:"drive_file_id,omitempty"`
+	DriveLink   string    `json:"drive_link,omitempty"`
 }
 
 type Job struct {
@@ -150,6 +152,18 @@ func (jm *JobManager) UpdateTrack(id string, idx int, status JobStatus, errMsg s
 	// Update counters (undo previous, apply new)
 	jm.adjustCounters(j, prev, -1)
 	jm.adjustCounters(j, status, 1)
+}
+
+func (jm *JobManager) SetTrackDriveInfo(id string, idx int, driveFileID, driveLink string) {
+	jm.mu.Lock()
+	defer jm.mu.Unlock()
+	j, ok := jm.jobs[id]
+	if !ok || idx < 0 || idx >= len(j.Tracks) {
+		return
+	}
+	j.Tracks[idx].DriveFileID = driveFileID
+	j.Tracks[idx].DriveLink = driveLink
+	j.UpdatedAt = time.Now()
 }
 
 func (jm *JobManager) adjustCounters(j *Job, status JobStatus, delta int) {

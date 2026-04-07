@@ -16,6 +16,7 @@ type Config struct {
 	Port      string
 	OutputDir string
 	APIKey    string
+	Drive     DriveConfig
 }
 
 func DefaultConfig() Config {
@@ -29,10 +30,21 @@ func DefaultConfig() Config {
 	}
 	apiKey := os.Getenv("API_KEY")
 
+	driveEnabled := os.Getenv("GDRIVE_ENABLED") == "true"
+	driveCredFile := os.Getenv("GDRIVE_CREDENTIALS_FILE")
+	driveRootFolder := os.Getenv("GDRIVE_ROOT_FOLDER_ID")
+	driveDeleteAfter := os.Getenv("GDRIVE_DELETE_AFTER_UPLOAD") == "true"
+
 	return Config{
 		Port:      port,
 		OutputDir: outputDir,
 		APIKey:    apiKey,
+		Drive: DriveConfig{
+			Enabled:           driveEnabled,
+			CredentialsFile:   driveCredFile,
+			RootFolderID:      driveRootFolder,
+			DeleteAfterUpload: driveDeleteAfter,
+		},
 	}
 }
 
@@ -45,7 +57,19 @@ type Server struct {
 
 func NewServer(cfg Config) *Server {
 	jobs := NewJobManager()
-	handler := NewHandler(jobs, cfg.OutputDir)
+
+	var driveClient *DriveClient
+	if cfg.Drive.Enabled {
+		var err error
+		driveClient, err = NewDriveClient(cfg.Drive)
+		if err != nil {
+			log.Printf("Warning: Google Drive integration disabled: %v", err)
+		} else if driveClient != nil {
+			log.Println("Google Drive integration enabled")
+		}
+	}
+
+	handler := NewHandler(jobs, cfg.OutputDir, driveClient)
 
 	s := &Server{
 		config:  cfg,

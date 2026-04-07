@@ -19,13 +19,15 @@ type Handler struct {
 	jobs      *JobManager
 	outputDir string
 	cancelMap map[string]context.CancelFunc
+	drive     *DriveClient
 }
 
-func NewHandler(jobs *JobManager, outputDir string) *Handler {
+func NewHandler(jobs *JobManager, outputDir string, drive *DriveClient) *Handler {
 	return &Handler{
 		jobs:      jobs,
 		outputDir: outputDir,
 		cancelMap: make(map[string]context.CancelFunc),
+		drive:     drive,
 	}
 }
 
@@ -48,6 +50,9 @@ type DownloadRequest struct {
 	UseAlbumTrackNumber  bool   `json:"use_album_track_number"`
 	UseFirstArtistOnly   bool   `json:"use_first_artist_only"`
 	UseSingleGenre       bool   `json:"use_single_genre"`
+	UploadToDrive        bool   `json:"upload_to_drive"`
+	DriveFolderID        string `json:"drive_folder_id"`
+	DeleteAfterUpload    bool   `json:"delete_after_upload"`
 }
 
 type MetadataRequest struct {
@@ -464,6 +469,41 @@ func (h *Handler) downloadSingleTrack(ctx context.Context, jobID string, idx int
 	}
 
 	h.jobs.UpdateTrack(jobID, idx, JobStatusCompleted, "", resultPath, fileSize)
+
+	// Upload to Google Drive if enabled
+	if req.UploadToDrive && h.drive != nil && resultPath != "" {
+		jobInfo := h.jobs.Get(jobID)
+		folderName := ""
+		if jobInfo != nil {
+			folderName = jobInfo.MetaName
+		}
+
+		driveCtx, driveCancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer driveCancel()
+
+		// Use per-request folder ID, or fall back to job folder name
+		var driveFileID, driveLink string
+		var driveErr error
+		if req.DriveFolderID != "" {
+			driveFileID, driveLink, driveErr = h.drive.Upload(driveCtx, resultPath, req.DriveFolderID)
+		} else {
+			driveFileID, driveLink, driveErr = h.drive.UploadWithJobFolder(driveCtx, resultPath, folderName)
+		}
+
+		if driveErr != nil {
+			log.Printf("Drive upload failed for %q: %v", track.TrackName, driveErr)
+		} else {
+			h.jobs.SetTrackDriveInfo(jobID, idx, driveFileID, driveLink)
+			log.Printf("Uploaded %q to Drive: %s", track.TrackName, driveLink)
+
+			// Delete local file after upload if requested
+			if req.DeleteAfterUpload {
+				if err := os.Remove(resultPath); err != nil {
+					log.Printf("Warning: failed to delete local file after drive upload: %v", err)
+				}
+			}
+		}
+	}
 }
 
 func (h *Handler) embedLyrics(track TrackJob, filePath string) {

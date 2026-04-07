@@ -7,10 +7,15 @@ services:
       - "${PORT:-8080}:8080"
     volumes:
       - ${DOWNLOAD_DIR:-./downloads}:/downloads
+      - ${GDRIVE_CREDENTIALS_FILE:-./service-account.json}:/config/service-account.json:ro
     environment:
       - PORT=8080
       - OUTPUT_DIR=/downloads
       - API_KEY=${API_KEY:-}
+      - GDRIVE_ENABLED=${GDRIVE_ENABLED:-false}
+      - GDRIVE_CREDENTIALS_FILE=/config/service-account.json
+      - GDRIVE_ROOT_FOLDER_ID=${GDRIVE_ROOT_FOLDER_ID:-}
+      - GDRIVE_DELETE_AFTER_UPLOAD=${GDRIVE_DELETE_AFTER_UPLOAD:-false}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 30s

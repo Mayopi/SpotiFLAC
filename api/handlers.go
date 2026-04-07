@@ -536,11 +536,19 @@ func (h *Handler) downloadSingleTrack(ctx context.Context, jobID string, idx int
 		close(isrcChan)
 	}
 
-	// --- Step 5: Download with retry (same logic as app.go:435-478) ---
+	// --- Step 5: Download with retry + service fallback rotation ---
+	// Build service order: requested service first, then rotate through others.
+	// Each service gets req.MaxRetries attempts before falling back to the next.
+	serviceOrder := buildServiceOrder(req.Service)
+
 	var downloadErr error
 	var filename string
+	succeeded := false
 
-	for attempt := 0; attempt < req.MaxRetries; attempt++ {
+	for _, svc := range serviceOrder {
+		if succeeded {
+			break
+		}
 		select {
 		case <-ctx.Done():
 			h.jobs.UpdateTrack(jobID, idx, JobStatusCancelled, "cancelled", "", 0)
@@ -548,67 +556,50 @@ func (h *Handler) downloadSingleTrack(ctx context.Context, jobID string, idx int
 		default:
 		}
 
-		switch req.Service {
-		case "tidal":
-			dl := backend.NewTidalDownloader("")
-			filename, downloadErr = dl.Download(
-				track.SpotifyID, downloadOutDir, req.AudioFormat, req.FilenameFormat,
-				req.TrackNumber, idx+1,
-				track.TrackName, track.ArtistName, track.AlbumName, track.AlbumArtist, releaseDate,
-				req.UseAlbumTrackNumber, coverURL, req.EmbedMaxQualityCover,
-				trackNumber, discNumber, totalTracks, totalDiscs,
-				copyright, publisher, spotifyURL,
-				req.allowFallbackValue(), req.UseFirstArtistOnly, req.UseSingleGenre, req.EmbedGenre,
-			)
-
-		case "qobuz":
-			isrc := <-isrcChan
-			quality := req.AudioFormat
-			if quality == "" {
-				quality = "6"
+		for attempt := 0; attempt < req.MaxRetries; attempt++ {
+			select {
+			case <-ctx.Done():
+				h.jobs.UpdateTrack(jobID, idx, JobStatusCancelled, "cancelled", "", 0)
+				return
+			default:
 			}
-			dl := backend.NewQobuzDownloader()
-			filename, downloadErr = dl.DownloadTrackWithISRC(
-				isrc, track.SpotifyID, downloadOutDir, quality, req.FilenameFormat,
-				req.TrackNumber, idx+1,
-				track.TrackName, track.ArtistName, track.AlbumName, track.AlbumArtist, releaseDate,
-				req.UseAlbumTrackNumber, coverURL, req.EmbedMaxQualityCover,
-				trackNumber, discNumber, totalTracks, totalDiscs,
-				copyright, publisher, spotifyURL,
-				req.allowFallbackValue(), req.UseFirstArtistOnly, req.UseSingleGenre, req.EmbedGenre,
-			)
 
-		default:
-			dl := backend.NewTidalDownloader("")
-			filename, downloadErr = dl.Download(
-				track.SpotifyID, downloadOutDir, req.AudioFormat, req.FilenameFormat,
-				req.TrackNumber, idx+1,
-				track.TrackName, track.ArtistName, track.AlbumName, track.AlbumArtist, releaseDate,
-				req.UseAlbumTrackNumber, coverURL, req.EmbedMaxQualityCover,
-				trackNumber, discNumber, totalTracks, totalDiscs,
-				copyright, publisher, spotifyURL,
-				req.allowFallbackValue(), req.UseFirstArtistOnly, req.UseSingleGenre, req.EmbedGenre,
-			)
-		}
+			filename, downloadErr = h.tryDownloadService(svc, track, req, downloadOutDir, idx, spotifyURL, coverURL, releaseDate, copyright, publisher, trackNumber, discNumber, totalTracks, totalDiscs, isrcChan)
 
-		if downloadErr == nil {
-			break
-		}
+			if downloadErr == nil {
+				succeeded = true
+				break
+			}
 
-		// Clean up partial/corrupted file on failure (same as app.go:483-491)
-		if filename != "" && !strings.HasPrefix(filename, "EXISTS:") {
-			if _, statErr := os.Stat(filename); statErr == nil {
-				log.Printf("Removing partial file after failed download: %s", filename)
-				os.Remove(filename)
+			// Clean up partial/corrupted file on failure
+			if filename != "" && !strings.HasPrefix(filename, "EXISTS:") {
+				if _, statErr := os.Stat(filename); statErr == nil {
+					log.Printf("Removing partial file after failed download: %s", filename)
+					os.Remove(filename)
+				}
+			}
+
+			if attempt < req.MaxRetries-1 {
+				log.Printf("[%s] attempt %d/%d failed for %q: %v, retrying...", svc, attempt+1, req.MaxRetries, track.TrackName, downloadErr)
+				time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+
+				// Re-enqueue ISRC for qobuz retry
+				if svc == "qobuz" && track.SpotifyID != "" {
+					isrcChan = make(chan string, 1)
+					go func() {
+						client := backend.NewSongLinkClient()
+						isrc, _ := client.GetISRCDirect(track.SpotifyID)
+						isrcChan <- isrc
+					}()
+				}
 			}
 		}
 
-		if attempt < req.MaxRetries-1 {
-			log.Printf("Download attempt %d/%d failed for %q: %v, retrying...", attempt+1, req.MaxRetries, track.TrackName, downloadErr)
-			time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+		if !succeeded {
+			log.Printf("[%s] all %d attempts failed for %q, trying next service...", svc, req.MaxRetries, track.TrackName)
 
-			// Re-enqueue ISRC for qobuz retry
-			if req.Service == "qobuz" && track.SpotifyID != "" {
+			// Prepare ISRC channel if next service might be qobuz
+			if track.SpotifyID != "" {
 				isrcChan = make(chan string, 1)
 				go func() {
 					client := backend.NewSongLinkClient()
@@ -619,8 +610,8 @@ func (h *Handler) downloadSingleTrack(ctx context.Context, jobID string, idx int
 		}
 	}
 
-	if downloadErr != nil {
-		h.jobs.UpdateTrack(jobID, idx, JobStatusFailed, downloadErr.Error(), "", 0)
+	if !succeeded {
+		h.jobs.UpdateTrack(jobID, idx, JobStatusFailed, fmt.Sprintf("all services failed: %v", downloadErr), "", 0)
 		return
 	}
 
@@ -784,6 +775,85 @@ func (h *Handler) CleanupJobs(w http.ResponseWriter, r *http.Request) {
 		"removed": removed,
 		"message": "cleaned up completed jobs older than 24 hours",
 	})
+}
+
+// buildServiceOrder returns the services to try, starting with the requested one.
+func buildServiceOrder(preferred string) []string {
+	all := []string{"tidal", "qobuz", "amazon"}
+	if preferred == "" {
+		return all
+	}
+	order := []string{preferred}
+	for _, s := range all {
+		if s != preferred {
+			order = append(order, s)
+		}
+	}
+	return order
+}
+
+func (h *Handler) tryDownloadService(
+	svc string,
+	track TrackJob, req DownloadRequest, outDir string, idx int,
+	spotifyURL, coverURL, releaseDate, copyright, publisher string,
+	trackNumber, discNumber, totalTracks, totalDiscs int,
+	isrcChan chan string,
+) (string, error) {
+	if track.SpotifyID == "" {
+		return "", fmt.Errorf("no spotify ID")
+	}
+
+	switch svc {
+	case "tidal":
+		dl := backend.NewTidalDownloader("")
+		return dl.Download(
+			track.SpotifyID, outDir, req.AudioFormat, req.FilenameFormat,
+			req.TrackNumber, idx+1,
+			track.TrackName, track.ArtistName, track.AlbumName, track.AlbumArtist, releaseDate,
+			req.UseAlbumTrackNumber, coverURL, req.EmbedMaxQualityCover,
+			trackNumber, discNumber, totalTracks, totalDiscs,
+			copyright, publisher, spotifyURL,
+			req.allowFallbackValue(), req.UseFirstArtistOnly, req.UseSingleGenre, req.EmbedGenre,
+		)
+
+	case "qobuz":
+		isrc := <-isrcChan
+		if isrc == "" {
+			return "", fmt.Errorf("ISRC lookup failed for qobuz")
+		}
+		quality := req.AudioFormat
+		if quality == "" || quality == "LOSSLESS" {
+			quality = "6"
+		} else if quality == "HI_RES_LOSSLESS" {
+			quality = "27"
+		}
+		dl := backend.NewQobuzDownloader()
+		return dl.DownloadTrackWithISRC(
+			isrc, track.SpotifyID, outDir, quality, req.FilenameFormat,
+			req.TrackNumber, idx+1,
+			track.TrackName, track.ArtistName, track.AlbumName, track.AlbumArtist, releaseDate,
+			req.UseAlbumTrackNumber, coverURL, req.EmbedMaxQualityCover,
+			trackNumber, discNumber, totalTracks, totalDiscs,
+			copyright, publisher, spotifyURL,
+			req.allowFallbackValue(), req.UseFirstArtistOnly, req.UseSingleGenre, req.EmbedGenre,
+		)
+
+	case "amazon":
+		dl := backend.NewAmazonDownloader()
+		return dl.DownloadBySpotifyID(
+			track.SpotifyID, outDir, req.AudioFormat, req.FilenameFormat,
+			"", "", // playlistName, playlistOwner
+			req.TrackNumber, idx+1,
+			track.TrackName, track.ArtistName, track.AlbumName, track.AlbumArtist, releaseDate,
+			coverURL, trackNumber, discNumber, totalTracks,
+			req.EmbedMaxQualityCover, totalDiscs,
+			copyright, publisher, spotifyURL,
+			req.UseFirstArtistOnly, req.UseSingleGenre, req.EmbedGenre,
+		)
+
+	default:
+		return "", fmt.Errorf("unknown service: %s", svc)
+	}
 }
 
 func extractPathParam(path, prefix string) string {

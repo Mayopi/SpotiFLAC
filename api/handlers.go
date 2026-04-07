@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -31,14 +32,22 @@ func NewHandler(jobs *JobManager, outputDir string) *Handler {
 // --- Request / Response types ---
 
 type DownloadRequest struct {
-	SpotifyURL     string `json:"spotify_url"`
-	Service        string `json:"service"`
-	AudioFormat    string `json:"audio_format"`
-	FilenameFormat string `json:"filename_format"`
-	OutputDir      string `json:"output_dir"`
-	EmbedLyrics    bool   `json:"embed_lyrics"`
-	Separator      string `json:"separator"`
-	MaxConcurrent  int    `json:"max_concurrent"`
+	SpotifyURL           string `json:"spotify_url"`
+	Service              string `json:"service"`
+	AudioFormat          string `json:"audio_format"`
+	FilenameFormat       string `json:"filename_format"`
+	OutputDir            string `json:"output_dir"`
+	Separator            string `json:"separator"`
+	MaxConcurrent        int    `json:"max_concurrent"`
+	MaxRetries           int    `json:"max_retries"`
+	EmbedLyrics          bool   `json:"embed_lyrics"`
+	EmbedGenre           bool   `json:"embed_genre"`
+	EmbedMaxQualityCover bool   `json:"embed_max_quality_cover"`
+	AllowFallback        *bool  `json:"allow_fallback"`
+	TrackNumber          bool   `json:"track_number"`
+	UseAlbumTrackNumber  bool   `json:"use_album_track_number"`
+	UseFirstArtistOnly   bool   `json:"use_first_artist_only"`
+	UseSingleGenre       bool   `json:"use_single_genre"`
 }
 
 type MetadataRequest struct {
@@ -76,6 +85,13 @@ func parseSpotifyType(url string) string {
 		}
 	}
 	return ""
+}
+
+func (req *DownloadRequest) allowFallbackValue() bool {
+	if req.AllowFallback == nil {
+		return true // default to true
+	}
+	return *req.AllowFallback
 }
 
 // --- Health ---
@@ -135,6 +151,7 @@ func (h *Handler) StartDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Apply defaults
 	if req.Service == "" {
 		req.Service = "tidal"
 	}
@@ -152,6 +169,12 @@ func (h *Handler) StartDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MaxConcurrent > 10 {
 		req.MaxConcurrent = 10
+	}
+	if req.MaxRetries <= 0 {
+		req.MaxRetries = 3
+	}
+	if req.MaxRetries > 10 {
+		req.MaxRetries = 10
 	}
 
 	outDir := req.OutputDir
@@ -268,10 +291,10 @@ func (h *Handler) extractTracks(data interface{}, jobID string) []TrackJob {
 	// Try single track
 	var trackResp struct {
 		Track struct {
-			SpotifyID  string `json:"spotify_id"`
-			Name       string `json:"name"`
-			Artists    string `json:"artists"`
-			AlbumName  string `json:"album_name"`
+			SpotifyID string `json:"spotify_id"`
+			Name      string `json:"name"`
+			Artists   string `json:"artists"`
+			AlbumName string `json:"album_name"`
 		} `json:"track"`
 	}
 	if json.Unmarshal(jsonBytes, &trackResp) == nil && trackResp.Track.Name != "" {
@@ -290,9 +313,9 @@ func (h *Handler) extractTracks(data interface{}, jobID string) []TrackJob {
 			Name string `json:"name"`
 		} `json:"album_info"`
 		TrackList []struct {
-			SpotifyID  string `json:"spotify_id"`
-			Name       string `json:"name"`
-			Artists    string `json:"artists"`
+			SpotifyID string `json:"spotify_id"`
+			Name      string `json:"name"`
+			Artists   string `json:"artists"`
 		} `json:"track_list"`
 	}
 	if json.Unmarshal(jsonBytes, &albumResp) == nil && len(albumResp.TrackList) > 0 {
@@ -314,9 +337,9 @@ func (h *Handler) extractTracks(data interface{}, jobID string) []TrackJob {
 			Name string `json:"name"`
 		} `json:"playlist_info"`
 		TrackList []struct {
-			SpotifyID  string `json:"spotify_id"`
-			Name       string `json:"name"`
-			Artists    string `json:"artists"`
+			SpotifyID string `json:"spotify_id"`
+			Name      string `json:"name"`
+			Artists   string `json:"artists"`
 		} `json:"track_list"`
 	}
 	if json.Unmarshal(jsonBytes, &playlistResp) == nil && len(playlistResp.TrackList) > 0 {
@@ -338,9 +361,9 @@ func (h *Handler) extractTracks(data interface{}, jobID string) []TrackJob {
 			Name string `json:"name"`
 		} `json:"artist_info"`
 		TrackList []struct {
-			SpotifyID  string `json:"spotify_id"`
-			Name       string `json:"name"`
-			Artists    string `json:"artists"`
+			SpotifyID string `json:"spotify_id"`
+			Name      string `json:"name"`
+			Artists   string `json:"artists"`
 		} `json:"track_list"`
 	}
 	if json.Unmarshal(jsonBytes, &artistResp) == nil && len(artistResp.TrackList) > 0 {
@@ -374,11 +397,11 @@ func (h *Handler) downloadSingleTrack(ctx context.Context, jobID string, idx int
 		track.TrackName, track.ArtistName,
 		"", "", "", // album, albumArtist, releaseDate
 		req.FilenameFormat,
-		"", "", // playlistName, playlistOwner
-		false,  // includeTrackNumber
-		idx+1,  // position
-		0,      // discNumber
-		false,  // useAlbumTrackNumber
+		"", "",            // playlistName, playlistOwner
+		req.TrackNumber,   // includeTrackNumber
+		idx+1,             // position
+		0,                 // discNumber
+		req.UseAlbumTrackNumber,
 	)
 
 	destPath := filepath.Join(downloadOutDir, filename)
@@ -395,21 +418,44 @@ func (h *Handler) downloadSingleTrack(ctx context.Context, jobID string, idx int
 		return
 	}
 
+	// Retry loop
 	var downloadErr error
 	var resultPath string
+	for attempt := 0; attempt < req.MaxRetries; attempt++ {
+		select {
+		case <-ctx.Done():
+			h.jobs.UpdateTrack(jobID, idx, JobStatusCancelled, "cancelled", "", 0)
+			return
+		default:
+		}
 
-	switch req.Service {
-	case "tidal":
-		resultPath, downloadErr = h.downloadViaTidal(ctx, track, req, downloadOutDir)
-	case "qobuz":
-		resultPath, downloadErr = h.downloadViaQobuz(ctx, track, req, downloadOutDir)
-	default:
-		resultPath, downloadErr = h.downloadViaTidal(ctx, track, req, downloadOutDir)
+		switch req.Service {
+		case "tidal":
+			resultPath, downloadErr = h.downloadViaTidal(track, req, downloadOutDir, idx)
+		case "qobuz":
+			resultPath, downloadErr = h.downloadViaQobuz(track, req, downloadOutDir, idx)
+		default:
+			resultPath, downloadErr = h.downloadViaTidal(track, req, downloadOutDir, idx)
+		}
+
+		if downloadErr == nil {
+			break
+		}
+
+		if attempt < req.MaxRetries-1 {
+			log.Printf("Download attempt %d/%d failed for %q: %v, retrying...", attempt+1, req.MaxRetries, track.TrackName, downloadErr)
+			time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+		}
 	}
 
 	if downloadErr != nil {
 		h.jobs.UpdateTrack(jobID, idx, JobStatusFailed, downloadErr.Error(), "", 0)
 		return
+	}
+
+	// Embed lyrics if enabled
+	if req.EmbedLyrics && track.SpotifyID != "" && resultPath != "" {
+		h.embedLyrics(track, resultPath)
 	}
 
 	var fileSize int64
@@ -420,7 +466,22 @@ func (h *Handler) downloadSingleTrack(ctx context.Context, jobID string, idx int
 	h.jobs.UpdateTrack(jobID, idx, JobStatusCompleted, "", resultPath, fileSize)
 }
 
-func (h *Handler) downloadViaTidal(_ context.Context, track TrackJob, req DownloadRequest, outDir string) (string, error) {
+func (h *Handler) embedLyrics(track TrackJob, filePath string) {
+	lyricsClient := backend.NewLyricsClient()
+	lyrics, _, err := lyricsClient.FetchLyricsAllSources(track.SpotifyID, track.TrackName, track.ArtistName, "", 0)
+	if err != nil || lyrics == nil {
+		return
+	}
+	lrc := lyricsClient.ConvertToLRC(lyrics, track.TrackName, track.ArtistName)
+	if lrc == "" {
+		return
+	}
+	if err := backend.EmbedLyricsOnlyUniversal(filePath, lrc); err != nil {
+		log.Printf("Failed to embed lyrics for %q: %v", track.TrackName, err)
+	}
+}
+
+func (h *Handler) downloadViaTidal(track TrackJob, req DownloadRequest, outDir string, position int) (string, error) {
 	if track.SpotifyID == "" {
 		return "", fmt.Errorf("no spotify ID for tidal download")
 	}
@@ -428,19 +489,21 @@ func (h *Handler) downloadViaTidal(_ context.Context, track TrackJob, req Downlo
 	dl := backend.NewTidalDownloader("")
 	return dl.Download(
 		track.SpotifyID, outDir, req.AudioFormat, req.FilenameFormat,
-		false, 0, // includeTrackNumber, position
+		req.TrackNumber, position,
 		track.TrackName, track.ArtistName, "", "", "", // album, albumArtist, releaseDate
-		false, "", false, // useAlbumTrackNumber, coverURL, embedMaxQualityCover
-		0, 0, 0, 0, // trackNumber, discNumber, totalTracks, totalDiscs
-		"", "", spotifyURL, // copyright, publisher, spotifyURL
-		true,  // allowFallback
-		false, // useFirstArtistOnly
-		false, // useSingleGenre
-		false, // embedGenre
+		req.UseAlbumTrackNumber,
+		"",                       // coverURL
+		req.EmbedMaxQualityCover, // embedMaxQualityCover
+		0, 0, 0, 0,              // trackNumber, discNumber, totalTracks, totalDiscs
+		"", "", spotifyURL,       // copyright, publisher, spotifyURL
+		req.allowFallbackValue(), // allowFallback
+		req.UseFirstArtistOnly,   // useFirstArtistOnly
+		req.UseSingleGenre,       // useSingleGenre
+		req.EmbedGenre,           // embedGenre
 	)
 }
 
-func (h *Handler) downloadViaQobuz(_ context.Context, track TrackJob, req DownloadRequest, outDir string) (string, error) {
+func (h *Handler) downloadViaQobuz(track TrackJob, req DownloadRequest, outDir string, position int) (string, error) {
 	if track.SpotifyID == "" {
 		return "", fmt.Errorf("spotify ID is required for qobuz")
 	}
@@ -460,15 +523,17 @@ func (h *Handler) downloadViaQobuz(_ context.Context, track TrackJob, req Downlo
 	dl := backend.NewQobuzDownloader()
 	return dl.DownloadTrackWithISRC(
 		isrc, track.SpotifyID, outDir, quality, req.FilenameFormat,
-		false, 0, // includeTrackNumber, position
+		req.TrackNumber, position,
 		track.TrackName, track.ArtistName, "", "", "", // album, albumArtist, releaseDate
-		false, "", false, // useAlbumTrackNumber, coverURL, embedMaxQualityCover
-		0, 0, 0, 0, // trackNumber, discNumber, totalTracks, totalDiscs
-		"", "", spotifyURL, // copyright, publisher, spotifyURL
-		true,  // allowFallback
-		false, // useFirstArtistOnly
-		false, // useSingleGenre
-		false, // embedGenre
+		req.UseAlbumTrackNumber,
+		"",                       // coverURL
+		req.EmbedMaxQualityCover, // embedMaxQualityCover
+		0, 0, 0, 0,              // trackNumber, discNumber, totalTracks, totalDiscs
+		"", "", spotifyURL,       // copyright, publisher, spotifyURL
+		req.allowFallbackValue(), // allowFallback
+		req.UseFirstArtistOnly,   // useFirstArtistOnly
+		req.UseSingleGenre,       // useSingleGenre
+		req.EmbedGenre,           // embedGenre
 	)
 }
 
@@ -504,7 +569,6 @@ func (h *Handler) GetJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CancelJob(w http.ResponseWriter, r *http.Request) {
-	// Extract job ID: /api/v1/jobs/{id}/cancel
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/jobs/")
 	jobID := strings.TrimSuffix(path, "/cancel")
 
@@ -564,4 +628,3 @@ func extractPathParam(path, prefix string) string {
 	}
 	return s
 }
-

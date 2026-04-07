@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -1588,4 +1589,83 @@ func (a *App) CreateM3U8File(m3u8Name string, outputDir string, filePaths []stri
 	}
 
 	return nil
+}
+
+func (a *App) CompareAudioAI(prompt string) (string, error) {
+	envVars, err := backend.LoadEnvFile()
+	if err != nil {
+		return "", fmt.Errorf("failed to load .env file: %w", err)
+	}
+	apiKey, ok := envVars["ZAI_API_KEY"]
+	if !ok || apiKey == "" {
+		return "", fmt.Errorf("ZAI_API_KEY not found in .env file")
+	}
+
+	type chatMessage struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	type chatRequest struct {
+		Model    string        `json:"model"`
+		Messages []chatMessage `json:"messages"`
+	}
+	type chatChoice struct {
+		Message chatMessage `json:"message"`
+	}
+	type chatResponse struct {
+		Choices []chatChoice `json:"choices"`
+	}
+
+	reqBody := chatRequest{
+		Model: "GLM-4.5-Flash",
+		Messages: []chatMessage{
+			{
+				Role:    "system",
+				Content: "You are an expert audio engineer. Compare two audio files based on the provided metrics. Give a concise verdict on which file has better audio quality and why. Focus on objective technical differences. Keep your response under 200 words.",
+			},
+			{
+				Role:    "user",
+				Content: prompt,
+			},
+		},
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", "https://api.z.ai/api/paas/v4/chat/completions", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBytes))
+	}
+
+	var chatResp chatResponse
+	if err := json.Unmarshal(respBytes, &chatResp); err != nil {
+		return "", fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if len(chatResp.Choices) == 0 {
+		return "", fmt.Errorf("no response from AI")
+	}
+
+	return chatResp.Choices[0].Message.Content, nil
 }
